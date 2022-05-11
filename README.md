@@ -1,9 +1,3 @@
-# drone-nman
-
-This repository is for summarizing papers read in the first semester (Spring 2022) of my graduate school, as well as ideas or insights that I have gotten while doing a research. You can test some functions related to the works by running the sample code below.
-
-
-
 ## Example run
 
 ```
