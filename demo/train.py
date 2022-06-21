@@ -62,9 +62,10 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=2000)
     
     parser.add_argument('--num_epochs_pre', type=int, default=1000)
-    parser.add_argument('--window_size', type=int, default=1)
+    parser.add_argument('--window_size', type=int, default=4)
     parser.add_argument('--num_actions', type=int, default=2)
-    parser.add_argument('--epsilon', type=int, default=0.5)
+    parser.add_argument('--epsilon', type=int, default=1)
+    parser.add_argument('--mask_path', default='/opt/pytorch/demo/masks/')
     
     args = parser.parse_args()
     
@@ -154,9 +155,9 @@ if __name__ == '__main__':
                     # Train agent module
                     if args.is_agent_module:
                         # Create a mask
-                        #exp.train_agents(net, args.batch_size, args.window_size, args.num_actions, args.epsilon)
+                        exp.train_agents(net, args.batch_size, args.window_size, args.num_actions, args.epsilon, subject_num, fold)
                         # Fine-tune the original model
-                        exp.finetune()
+                        exp.finetune(args.mask_path)
                         
                 elif args.model_type == 'FBCSP':
                     valid_acc = net.train(train_dataloader, valid_dataloader, checkpoint_file)
