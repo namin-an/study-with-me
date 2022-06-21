@@ -55,8 +55,8 @@ class Critic(nn.Module):
     """
     def __init__(self, state_dim, action_dim, hidden_size, output_size=1):
         super(Actor, self).__init__()
-        self.fc1 = nn.LazyLinear(state_dim, hidden_size)
-        self.fc2 = nn.LazyLinear(action_dim, out_features=hidden_size)
+        self.fc1 = nn.Linear(state_dim, hidden_size)
+        self.fc2 = nn.Linear(action_dim, out_features=hidden_size)
         self.fc3 = nn.Linear(hidden_size, output_size)
         
     def forward(self, state, action):
