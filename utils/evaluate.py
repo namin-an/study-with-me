@@ -1,4 +1,5 @@
 import time
+import random
 import traceback
 from collections import Counter
 import torch
@@ -35,7 +36,15 @@ class Evaluate():
                     pass
             c = Counter(preds_cands) # {value: counted number} starting with the highest counted number value
             try:
-                final_idxs = c.most_common()[0][0] 
+                final_idxs = c.most_common()[0][0] # always choose the first one
+#                 ordered_cands = c.most_common()
+#                 max_freq = ordered_cands[0][-1]
+#                 final_idxs_cands = []
+#                 for class_num, freq in ordered_cands:
+#                     if freq == max_freq: 
+#                         final_idxs_cands.append(class_num)
+#                 final_idxs = random.choice(final_idxs_cands)
+                
                 test_accs.update((targets == final_idxs).float().mean(), inputs.size(0))
             except Exception as e:
                 print(e)
