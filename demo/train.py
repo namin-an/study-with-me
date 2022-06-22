@@ -59,7 +59,7 @@ if __name__ == '__main__':
     # parser.add_argument('--input_shape', type=int, nargs='+', default=[1, 1, 22, 500])
     parser.add_argument('--dropout_rate', type=float, default=0.5)
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--num_epochs', type=int, default=2000)
+    parser.add_argument('--num_epochs', type=int, default=1100)
     
     parser.add_argument('--num_epochs_pre', type=int, default=1000)
     parser.add_argument('--window_size', type=int, default=4)
@@ -72,7 +72,7 @@ if __name__ == '__main__':
     if args.data_type == 'bci_comp4a' or args.data_type == 'drone':
         class_num = 4
     subject_dict = {'Subject #':[], 'Accuracy':[]}
-    for subject_num in range(args.tot_subject_num):
+    for subject_num in range(2, args.tot_subject_num):
         # Load training data.
         if args.data_type == 'bci_comp4a':
             dataset = BCIComp42aDataLoader(data_path=args.data_path,
@@ -154,10 +154,8 @@ if __name__ == '__main__':
                     
                     # Train agent module
                     if args.is_agent_module:
-                        # Create a mask
-                        exp.train_agents(net, args.batch_size, args.window_size, args.num_actions, args.epsilon, subject_num, fold)
-                        # Fine-tune the original model
-                        exp.finetune(args.mask_path)
+                        # Create a mask and finethune the original network (environment)
+                        exp.train_agents(net, args.batch_size, args.window_size, args.num_actions, args.epsilon, subject_num, fold, args.mask_path)
                         
                 elif args.model_type == 'FBCSP':
                     valid_acc = net.train(train_dataloader, valid_dataloader, checkpoint_file)
