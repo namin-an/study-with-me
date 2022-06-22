@@ -56,7 +56,7 @@ class Experiment():
                 # train
                 self.net.train()
                 for batch, data in enumerate(self.train_dataloader):
-                    optimizer.zero_grad() # initialize model parameters
+                    self.optimizer.zero_grad() # initialize model parameters
 
                     inputs = data['features'].to(self.device0, dtype=torch.float)
                     targets = data['labels'].to(self.device0, dtype=torch.long)
@@ -126,7 +126,7 @@ class Experiment():
                 self.writer.add_scalar(f'top{self.class_num//2}_accuracy/valid', valid_accs2.avg, epoch)
                 self.writer.add_scalar('kappa/valid', valid_kappas.avg, epoch)
 
-                if epoch % 30 == 0: # cumulative values
+                if epoch % 30 == 0:
                     print(f'Epoch: {epoch:}/{self.num_epochs_pre}] Loss: {losses.avg:.3f} (valid loss: {valid_losses.avg:.3f}) Acc.: {accs.avg:.3f} (valid acc.: {valid_accs.avg:.3f})')
 
                 self.early_stopping(valid_losses.avg, self.net)
@@ -141,8 +141,8 @@ class Experiment():
         return self.net, max(final_valid_accs)
     
     
-    # fine-tuning with our agent module
-    def train_agents(self, net, BATCH_SIZE, WINDOW_SIZE, NUM_ACTIONS, EPSILON, SUBJECT_NUM, FOLD_NUM):  
+    # agent making the "mask" and fine-tuning the original model
+    def train_agents(self, net, BATCH_SIZE, WINDOW_SIZE, NUM_ACTIONS, EPSILON, SUBJECT_NUM, FOLD_NUM, mask_path):  
         
         checkpoint_file_agents = self.checkpoint_file + '_agents'    
         if not os.path.isfile(checkpoint_file_agents):
@@ -234,16 +234,17 @@ class Experiment():
 
                     # Update states
                     states = next_states
-                    self.writer.add_scalar(f'loss_AM/train/episode{episode}', loss_AM, t)                
-                    self.writer.add_scalar(f'reward_AM/train/episode{episode}', torch.mean(rewards), t)
-                    self.writer.add_scalar(f'qvalues_agents/train/episode{episode}', torch.mean(Q_values), t)
+                    
+                    self.writer.add_scalar(f'loss_agents/episode{episode}', loss_AM, t)                
+                    self.writer.add_scalar(f'reward/episode{episode}', torch.mean(rewards), t)
+                    self.writer.add_scalar(f'qvalues/episode{episode}', torch.mean(Q_values), t)
                 
-                self.writer.add_scalar(f'loss_AM/train', Losses.avg, episode)                
-                self.writer.add_scalar(f'reward_AM/train', Rewards.avg, episode)
-                self.writer.add_scalar(f'qvalues_agents/train', Qvalues.avg, episode)
+                self.writer.add_scalar(f'loss_agents', Losses.avg, episode)                
+                self.writer.add_scalar(f'reward', Rewards.avg, episode)
+                self.writer.add_scalar(f'qvalues', Qvalues.avg, episode)
                     
                 # Update the parameters in the target network 
-                if episode % 2 == 0:
+                if episode % 10 == 0:
                     target_net.load_state_dict(policy_net.state_dict())
                                   
                 print(f'Episode: {episode:}/{self.num_epochs - self.num_epochs_pre}, Rewards: {Rewards.avg:.4f}, Q-values: {Qvalues.avg:.4f}')                 
@@ -254,44 +255,51 @@ class Experiment():
 
             self.writer.flush()
             self.writer.close()
-        
-        
-    def finetune(self, mask_path):    
-        self.net.to(self.device0)
+            
+            del net, Experience, memory, policy_net, target_net, optimizer_policy, criterion_policy, self.writer
+
+            torch.cuda.empty_cache()
+                
+        # finetune the original network using the mask created by our agent
+        self.net.to(self.device2)
         self.net.load_state_dict(torch.load(self.checkpoint_file)) # fine-tune
-        
-        mask_files = []
-        for file in os.listdir(mask_path):
-            name, ext = file.split('.')
-            split_name = name.split('_')
-            if ext == 'pt':
-                mask_files.append(os.path.join(mask_path, file))
-        
-        # we will update finetune the model based on the mask created by our agent
+
+        # finetune the model based on the mask created by our agent
         checkpoint_file_agents = self.checkpoint_file + '_agents'
         if not os.path.isfile(checkpoint_file_agents):
-            for mask_file in mask_files:
-                mask = torch.load(mask_file)
-                mask = mask.to(self.device0)
-                
-                final_valid_accs = []
-                self.net.train()
+            for file in os.listdir(mask_path):
+                name, ext = file.split('.')
+                if ext == 'pt':
+                    assert len(name.split('_')) == 5
+                    _, _, subjectnum, foldnum, epinum = name.split('_')
+                    for episode in range(self.num_epochs - self.num_epochs_pre):
+                        if episode % (len(self.train_dataloader)) == 0:
+                            iterated_dataloader = iter(self.train_dataloader)
+                        if str(subjectnum[-1]) == str(SUBJECT_NUM) and str(foldnum[-1]) == str(FOLD_NUM) and str(epinum) == str(episode):
+                            
+                            print(subjectnum, foldnum, epinum)
+                            
+                            mask_file = os.path.join(mask_path, file)
+                            mask = torch.load(mask_file)
+                            mask = mask.to(self.device2)
 
-                iterated_dataloader = iter(self.train_dataloader)
-                data = next(iterated_dataloader) # whole data (230 trials)
-                inputs = data['features'].to(self.device0, dtype=torch.float)
-                targets = data['labels'].to(self.device0, dtype=torch.long)
+                            final_valid_accs = []
+                            self.net.train()
 
-                self.optimizer.zero_grad() # initialize model parameters
+                            data = next(iterated_dataloader)
+                            inputs = data['features'].to(self.device2, dtype=torch.float)
+                            targets = data['labels'].to(self.device2, dtype=torch.long)
 
-                features = self.net.extraction(inputs)
-                assert features.shape == mask.shape
-                masked_features = features * mask            
-                outputs = self.net.classification(masked_features)  
-                outputs = self.last_trans(outputs)
+                            self.optimizer.zero_grad() 
 
-                loss = self.criterion(outputs, targets.squeeze())
-                loss.backward() 
-                self.optimizer.step()   
-            
-            torch.save(self.net.state_dict(), checkpoint_file_agents)
+                            features = self.net.extraction(inputs)
+                            assert features.shape == mask.shape
+                            masked_features = features * mask            
+                            outputs = self.net.classification(masked_features)  
+                            outputs = self.last_trans(outputs)
+
+                            loss = self.criterion(outputs, targets.squeeze())
+                            loss.backward() 
+                            self.optimizer.step()   
+
+                            torch.save(self.net.state_dict(), checkpoint_file_agents)
