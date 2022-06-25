@@ -25,7 +25,7 @@ if __name__ == '__main__':
     device = torch.device("cuda:2") if torch.cuda.is_available() else torch.device("cpu")
     print(torch.cuda.device_count(), device, 'devices available')
     today = datetime.now().strftime('%Y%m%d')
-    today = '20220523'
+    today = '20220624'
     
     parser = argparse.ArgumentParser()
     
@@ -33,7 +33,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--is_subject_independent', type=bool, default=False)
     parser.add_argument('--data_type', type=str, default='bci_comp4a')
-    parser.add_argument('--fold_num', type=int, default=5)
+    parser.add_argument('--fold_num', type=int, default=10)
     parser.add_argument('--tot_subject_num', type=int, default=9)
     parser.add_argument('--data_path', default='/opt/pytorch/datasets/BCIComp42a')
     parser.add_argument('--label_path', default='/opt/pytorch/datasets/BCIComp42a/true_labels')

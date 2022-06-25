@@ -31,7 +31,7 @@ if __name__ == '__main__':
     device1 = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
     device2 = torch.device("cuda:2") if torch.cuda.is_available() else torch.device("cpu")
     today = datetime.now().strftime('%Y%m%d')
-    today = '20220523'
+    today = '20220624'
     
     parser = argparse.ArgumentParser()
     
@@ -39,7 +39,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--is_subject_independent', type=bool, default=True)
     parser.add_argument('--data_type', type=str, default='bci_comp4a')
-    parser.add_argument('--fold_num', type=int, default=5)
+    parser.add_argument('--fold_num', type=int, default=10)
     parser.add_argument('--tot_subject_num', type=int, default=9)
     parser.add_argument('--data_path', default='/opt/pytorch/datasets/BCIComp42a')
     parser.add_argument('--label_path', default='/opt/pytorch/datasets/BCIComp42a/true_labels')
@@ -72,7 +72,7 @@ if __name__ == '__main__':
     if args.data_type == 'bci_comp4a' or args.data_type == 'drone':
         class_num = 4
     subject_dict = {'Subject #':[], 'Accuracy':[]}
-    for subject_num in range(2, args.tot_subject_num):
+    for subject_num in range(1): #args.tot_subject_num):
         # Load training data.
         if args.data_type == 'bci_comp4a':
             dataset = BCIComp42aDataLoader(data_path=args.data_path,
@@ -145,7 +145,7 @@ if __name__ == '__main__':
 
                     # Train neural network
                     exp = Experiment(train_dataloader, valid_dataloader, net, args.learning_rate, args.num_epochs, args.num_epochs_pre, device0, device1, device2, checkpoint_file, log_path, args.model_type, class_num)
-                    net, valid_acc = exp.train()
+                    valid_acc = exp.train()
 
                     # Test for drone dataset only
                     # Subject-independent scenario               
@@ -155,7 +155,7 @@ if __name__ == '__main__':
                     # Train agent module
                     if args.is_agent_module:
                         # Create a mask and finethune the original network (environment)
-                        exp.train_agents(net, args.batch_size, args.window_size, args.num_actions, args.epsilon, subject_num, fold, args.mask_path)
+                        exp.train_agents(args.window_size, args.num_actions, args.epsilon, subject_num, fold, args.mask_path)
                         
                 elif args.model_type == 'FBCSP':
                     valid_acc = net.train(train_dataloader, valid_dataloader, checkpoint_file)
