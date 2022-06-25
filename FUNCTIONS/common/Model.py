@@ -17,15 +17,13 @@ class DQN(nn.Module):
         self.fc2 = nn.Linear(128, 32)
         self.fc3 = nn.Linear(32, n_actions)
         
+        self.softmax = nn.Softmax(dim=-1)
+        
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.softmax(self.fc3(x))
         return x
-    
-    @staticmethod
-    def softmax(z):
-        return torch.exp(z) / torch.sum(torch.exp(z), axis=0)   
 
         
 class Actor(nn.Module):
@@ -34,19 +32,18 @@ class Actor(nn.Module):
     """
     def __init__(self, state_dim ,hidden_size, n_actions):
         super(Actor, self).__init__()
+        
         self.fc1 = nn.Linear(state_dim, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, n_actions)
+        
+        self.softmax = nn.Softmax(dim=-1)
         
     def forward(self, state):
         out = F.relu(self.fc1(state))
         out = F.relu(self.fc2(out))
         out = self.softmax(self.fc3(out))
         return out
-    
-    @staticmethod
-    def softmax(z):
-        return torch.exp(z) / torch.sum(torch.exp(z), axis=0)     
 
     
 class Critic(nn.Module):
@@ -55,9 +52,12 @@ class Critic(nn.Module):
     """
     def __init__(self, state_dim, action_dim, hidden_size, output_size=1):
         super(Actor, self).__init__()
+        
         self.fc1 = nn.Linear(state_dim, hidden_size)
         self.fc2 = nn.Linear(action_dim, out_features=hidden_size)
         self.fc3 = nn.Linear(hidden_size, output_size)
+        
+        self.sigmoid = nn.Sigmoid()
         
     def forward(self, state, action):
         out = F.relu(self.fc1(state))
@@ -66,10 +66,6 @@ class Critic(nn.Module):
         out = self.sigmoid(self.fc3(out))
         return out
     
-    @staticmethod
-    def sigmoid(z):
-        return 1 / (1 + torch.exp(-z))    
-    
     
 class ActorCritic(nn.Module):
     """
@@ -77,10 +73,14 @@ class ActorCritic(nn.Module):
     """
     def __init__(self, state_dim, action_dim, hidden_size, critic_output_size=1):
         super(ActorCritic, self).__init__()
+        
         self.fc1 = nn.Linear(state_dim, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.actor_fc3 = nn.Linear(hidden_size, actor_dim)
         self.critic_fc3 = nn.Linear(hidden_size, critic_output_size)
+        
+        self.softmax = nn.Softmax(dim=-1)
+        self.sigmoid = nn.Sigmoid()
         
     def __call__(self, state):
         out = F.relu(self.fc1(state))
@@ -88,15 +88,5 @@ class ActorCritic(nn.Module):
         action = self.softmax(self.actor_fc3(out))
         qvalue = self.sigmoid(self.critic_fc3(out))
         return action, qvalue
-    
-    @staticmethod
-    def softmax(z):
-        return torch.exp(z) / torch.sum(torch.exp(z), axis=0)       
-    
-    @staticmethod
-    def sigmoid(z):
-        return 1 / (1 + torch.exp(-z))     
-  
-    
-    
+
     
