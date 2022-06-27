@@ -36,7 +36,10 @@ class Evaluate():
                     pass
             c = Counter(preds_cands) # {value: counted number} starting with the highest counted number value
             try:
-                final_idxs = c.most_common()[0][0] # always choose the first one
+                # ALWAYS CHOOSE THE FIRST ONE
+                final_idxs = c.most_common()[0][0] 
+                
+                # CHOOSE THE RANDOM ONE
 #                 ordered_cands = c.most_common()
 #                 max_freq = ordered_cands[0][-1]
 #                 final_idxs_cands = []

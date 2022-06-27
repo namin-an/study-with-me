@@ -48,6 +48,8 @@ class Experiment():
     
     # normal training procedure
     def train(self):
+        device = self.device0
+        
         if not os.path.isfile(self.checkpoint_file): 
 
             final_valid_accs = []
@@ -59,8 +61,8 @@ class Experiment():
                 for batch, data in enumerate(self.train_dataloader):
                     self.optimizer.zero_grad() # initialize model parameters
 
-                    inputs = data['features'].to(self.device0, dtype=torch.float)
-                    targets = data['labels'].to(self.device0, dtype=torch.long)
+                    inputs = data['features'].to(device, dtype=torch.float)
+                    targets = data['labels'].to(device, dtype=torch.long)
 
                     outputs = self.net(inputs)  # (batch_size, class_num)
                     loss = self.criterion(outputs, targets.squeeze())
@@ -98,8 +100,8 @@ class Experiment():
                 # validation
                 self.net.eval()
                 for batch, data in enumerate(self.valid_dataloader):                
-                    inputs = data['features'].to(self.device0, dtype=torch.float)
-                    targets = data['labels'].to(self.device0, dtype=torch.long)
+                    inputs = data['features'].to(device, dtype=torch.float)
+                    targets = data['labels'].to(device, dtype=torch.long)
 
                     outputs = self.net(inputs) 
                     loss = self.criterion(outputs, targets.squeeze())   
@@ -144,117 +146,144 @@ class Experiment():
     
     # agent making the "mask" and fine-tuning the original model
     def train_agents(self, WINDOW_SIZE, NUM_ACTIONS, EPSILON, SUBJECT_NUM, FOLD_NUM, mask_path):  
-        
+        device = self.device1
         checkpoint_file_agents = self.checkpoint_file + '_agents' 
-        final_episode = self.num_epochs - self.num_epochs_pre - 1
         
         if not os.path.isfile(checkpoint_file_agents):
-            self.net.load_state_dict(torch.load(self.checkpoint_file))
-            self.net = self.net.to(self.device1) 
+            # self.net.load_state_dict(torch.load(self.checkpoint_file))
+            net = self.net.to(device)
+            optimizer = torch.optim.Adam(net.parameters(), lr=self.learning_rate)
             
             # Initialize replay memory "Experience" to capacity 10,000
             Experience = namedtuple("Experience", ("state", "action", "reward", "next_state"))
             memory = ReplayMemory(10000, Experience)
             
             # Initialize action-value and target action-value network   
-            policy_net = DQN(WINDOW_SIZE, NUM_ACTIONS).to(self.device1)
-            target_net = DQN(WINDOW_SIZE, NUM_ACTIONS).to(self.device1)
+            policy_net = DQN(WINDOW_SIZE, NUM_ACTIONS).to(device)
+            target_net = DQN(WINDOW_SIZE, NUM_ACTIONS).to(device)
             
-            optimizer_policy = torch.optim.RMSprop(policy_net.parameters(), lr=0.001, momentum=0.95)
+            optimizer_policy = torch.optim.RMSprop(policy_net.parameters(), lr=0.0001, momentum=0.95)
             criterion_policy = nn.SmoothL1Loss()
             target_net.load_state_dict(policy_net.state_dict())
             policy_net.train() 
-            target_net.train()            
+            target_net.train()   
+            
+            early_stopping_agents = EarlyStopping(patience=self.num_epochs - self.num_epochs_pre, verbose=False, delta=0, checkpoint_file=checkpoint_file_agents)
+            scheduler_agents = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=self.num_epochs - self.num_epochs_pre)
             
             for episode in range(self.num_epochs - self.num_epochs_pre): 
                 if episode % (len(self.train_dataloader)) == 0:
                     iterated_dataloader = iter(self.train_dataloader)
-                    Losses, Rewards, Qvalues = AverageMeter(), AverageMeter(), AverageMeter()                
+                    Losses, ValidLosses, Rewards, Qvalues, Ratios = AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter()                
                 done = False
                 
+                # train
                 self.net.train()
-                # for batch, data in enumerate(self.train_dataloader):  
-                data = next(iterated_dataloader) # fresh whole dataset everytime the episode starts
-                inputs = data['features'].to(self.device1, dtype=torch.float)
-                features = self.net.extraction(inputs)
-                targets = data['labels'].to(self.device1, dtype=torch.long)
-                    
-                env = Env(self.device1, self.net, self.optimizer, self.last_trans, self.criterion, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM)
-                EPSILON * 0.90 if EPSILON > 0.1 else EPSILON     
-                agent = Agent(self.device1, n_actions=NUM_ACTIONS, epsilon=EPSILON) # masking (0), remaining (1)
+                for i, data in enumerate(self.train_dataloader):  
+                # data = next(iterated_dataloader) # fresh whole dataset everytime the episode starts
+                    inputs = data['features'].to(device, dtype=torch.float)
+                    self.writer.add_graph(self.net, inputs)
+                    features = self.net.extraction(inputs)
+                    targets = data['labels'].to(device, dtype=torch.long)
 
-                # Initialize preprocessed states (batch, window_size)
-                mask, rewards = torch.ones(features.shape).to(self.device1), torch.tensor([-1.])
-                states = env.reset(0, features, mask)
+                    env = Env(inputs, targets, self.net, self.optimizer, self.last_trans, self.criterion, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM)
+                    EPSILON * 0.995 if EPSILON > 0.1 else EPSILON     
+                    agent = Agent(device, n_actions=NUM_ACTIONS, epsilon=EPSILON) # masking (0), remaining (1)
 
-                # Until our agent learns how to select "informative" features do
-                for t in count():      
-                    # Select actions (batch, 1)
-                    actions = agent.act(states, policy_net, features.shape[0], self.device1) 
+                    # Initialize preprocessed states (batch, window_size)
+                    mask, rewards = torch.ones(features.shape).to(device), torch.tensor([-1.])
+                    states = env.reset(0, features, mask)
 
-                    # Execute action and observe reward and the next state
-                    # and update the original network with selected features   
-                    next_states, rewards, done, loss, mask = env.step(episode, t, actions, states, inputs, targets, mask, Rewards.max_val)   
-                    # self.writer.add_graph(self.net, inputs)
-                    if done:
-                        break
-                    Losses.update(loss) 
-                    Rewards.update(torch.mean(rewards))                    
+                    # Until our agent learns how to select "informative" features do
+                    for t in count():      
+                        # Select actions (batch, 1)
+                        actions = agent.act(states, policy_net, features.shape[0], device)
 
-                    # Store experiences in the replay memory
-                    memory.push(states, actions, rewards, next_states) # DQN update (affects the agent.act(state, policy_net) code)
-                    # Optimize policy network using the memory buffer
-                    if len(memory) >= 1:
-                        # Sample random minibatch of experiences from the replay memory
-                        experiences = memory.sample(1) # ex. [Experience(states=4, actions=5), Experience(states=4, actions=5)] # sampling one is enough, since one memory contains the whole batch.
-                        batch = Experience(*zip(*experiences)) # ex. Experience(states=(4, 4), actions=(5, 5))         
+                        # Execute action and observe reward and the next state
+                        # and update the original network with selected features   
+                        next_states, rewards, done, loss, mask = env.step(episode, t, actions, states, features, mask)   
+                        if done:
+                            break
+                        Losses.update(loss) 
+                        Rewards.update(torch.mean(rewards))                    
 
-                        # Convert tuples to tensors
-                        state_batch = torch.cat(batch.state).to(self.device1) 
-                        action_batch = torch.cat(batch.action).to(self.device1) 
-                        reward_batch = torch.cat(batch.reward).to(self.device1)  
-                        next_state_batch = torch.cat(batch.next_state).to(self.device1)
+                        # Store experiences in the replay memory
+                        memory.push(states, actions, rewards, next_states) # DQN update (affects the agent.act(state, policy_net) code)
+                        # Optimize policy network using the memory buffer
+                        if len(memory) >= 1:
+                            # Sample random minibatch of experiences from the replay memory
+                            experiences = memory.sample(1) # ex. [Experience(states=4, actions=5), Experience(states=4, actions=5)] # sampling one is enough, since one memory contains the whole batch.
+                            batch = Experience(*zip(*experiences)) # ex. Experience(states=(4, 4), actions=(5, 5))         
 
-                        Q_values = torch.tensor([policy_net(state_batch)[i][action_batch[i]].item() for i in range(action_batch.shape[0])]).to(self.device1)
-                        Q_values = Q_values.squeeze()
+                            # Convert tuples to tensors
+                            state_batch = torch.cat(batch.state).to(device) 
+                            action_batch = torch.cat(batch.action).to(device) 
+                            reward_batch = torch.cat(batch.reward).to(device)  
+                            next_state_batch = torch.cat(batch.next_state).to(device)
 
-                        if t == features.shape[-1] - states.shape[-1]:
-                            next_Q_values = reward_batch.to(self.device1)
-                        else:
-                            # Select the optimal value Q at the next time-step
-                            # by choosing the maximum Q-values among all possible actions
-                            max_Q_values = torch.tensor([target_net(next_state_batch)[i].max(dim=-1)[1] for i in range(action_batch.shape[0])]).to(self.device1) # max Q(s, a) for DQN 
-                            reward_batch, max_Q_values = reward_batch.squeeze(), max_Q_values.squeeze()
-                            next_Q_values = reward_batch + (max_Q_values * 0.99) # r_t + gamma * Q_(t+1)
-                        next_Q_values = next_Q_values.squeeze()
+                            Q_values = torch.tensor([policy_net(state_batch)[i][action_batch[i]].item() for i in range(action_batch.shape[0])]).to(device)
+                            Q_values = Q_values.squeeze()
 
-                        Qvalues.update(torch.mean(Q_values)) 
-                        loss_q = criterion_policy(Q_values, next_Q_values)
-                        loss_q = loss_q.clone().detach()
-                        loss_q.requires_grad = True
-                        optimizer_policy.zero_grad()
-                        loss_q.backward()
-                        optimizer_policy.step()
+                            if t == features.shape[-1] - states.shape[-1]:
+                                next_Q_values = reward_batch.to(device)
+                            else:
+                                # Select the optimal value Q at the next time-step
+                                # by choosing the maximum Q-values among all possible actions
+                                max_Q_values = torch.tensor([target_net(next_state_batch)[i].max(dim=-1)[1] for i in range(action_batch.shape[0])]).to(device) # max Q(s, a) for DQN 
+                                reward_batch, max_Q_values = reward_batch.squeeze(), max_Q_values.squeeze()
+                                next_Q_values = reward_batch + (max_Q_values * 0.99) # r_t + gamma * Q_(t+1)
+                            next_Q_values = next_Q_values.squeeze()
+
+                            Qvalues.update(torch.mean(Q_values)) 
+                            loss_q = criterion_policy(Q_values, next_Q_values)
+                            loss_q = loss_q.clone().detach()
+                            loss_q.requires_grad = True
+                            optimizer_policy.zero_grad()
+                            loss_q.backward()
+                            optimizer_policy.step()
 
                     # Update states
                     states = next_states
-
+                    
+                    ratio = torch.count_nonzero(mask).item() / (mask.shape[0]*mask.shape[1]) # calculate ratio only for the final mask
+                    Ratios.update(ratio, inputs.size(0))
                     self.writer.add_image(f'mask/{episode}', mask.unsqueeze(axis=0), t) 
+                    
+                    print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)}, BATCH: {i}/{(len(self.train_dataloader))}, Loss: {Losses.avg.item()}, Reward: {Rewards.avg.item()}, Q-value: {Qvalues.avg.item()}')
+                    
+                scheduler_agents.step()
+                
+                # validation
+                self.net.eval()
+                for j, data in enumerate(self.valid_dataloader):                
+                    inputs = data['features'].to(device, dtype=torch.float)
+                    targets = data['labels'].to(device, dtype=torch.long)
 
-                self.writer.add_scalar(f'loss_agents', Losses.avg, episode)                
-                self.writer.add_scalar(f'reward', Rewards.avg, episode)
+                    outputs = self.net(inputs) 
+                    valid_loss = self.criterion(outputs, targets.squeeze())   
+                    ValidLosses.update(valid_loss, inputs.size(0))
+                    
+                    print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)},BATCH: {j}/{len(self.valid_dataloader)}, Valid_loss:{ValidLosses.avg.item()}')
+                
+                early_stopping_agents(ValidLosses.avg.item(), self.net)
+                if self.early_stopping.early_stop:
+                    print("Early stopped.")
+                    break
+                    
+                self.writer.add_scalar(f'loss_agents/train', Losses.avg, episode)      
+                self.writer.add_scalar(f'loss_agents/valid', ValidLosses.avg, episode)  
+                self.writer.add_scalar(f'rewards', Rewards.avg, episode)
                 self.writer.add_scalar(f'qvalues', Qvalues.avg, episode)
-
-                if episode % 4 == 0:
-                    target_net.load_state_dict(policy_net.state_dict())                                                
-                print(f'EPISODE: {episode}, Losses: {Losses.avg.item()}, Rewards: {Rewards.avg.item()}, Q-values: {Qvalues.avg.item()}')
-                del episode, done, env, agent, data, inputs, features, targets, mask, rewards, states, next_states, experiences, batch, state_batch, action_batch, reward_batch, next_state_batch, Q_values, next_Q_values, max_Q_values, loss_q
+                self.writer.add_scalar(f'ratios', Ratios.avg, episode) 
+    
+                if episode % 2 == 0:
+                    target_net.load_state_dict(policy_net.state_dict())                                 
+                
+                del episode, done, env, agent, data, inputs, features, targets, mask, rewards, states, next_states, experiences, batch, state_batch, action_batch, reward_batch, next_state_batch, Q_values, next_Q_values, max_Q_values, loss_q, valid_loss, ratio
                 torch.cuda.empty_cache()
 
             self.writer.flush()
             self.writer.close()
             
-            del Rewards, Losses, Qvalues, self.net, Experience, memory, policy_net, target_net, optimizer_policy, criterion_policy, self.writer
+            del Rewards, Losses, Qvalues, ValidLosses, Ratios, self.net, Experience, memory, policy_net, target_net, optimizer_policy, criterion_policy, self.writer
             torch.cuda.empty_cache()
-
-       
