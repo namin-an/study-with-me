@@ -25,7 +25,7 @@ if __name__ == '__main__':
     device = torch.device("cuda:2") if torch.cuda.is_available() else torch.device("cpu")
     print(torch.cuda.device_count(), device, 'devices available')
     today = datetime.now().strftime('%Y%m%d')
-    today = '20220627'
+    today = '20220629'
     
     parser = argparse.ArgumentParser()
     
@@ -69,7 +69,7 @@ if __name__ == '__main__':
         
     subject_dict = {'Subject #':[], 'Accuracy':[]}
     for subject_num in range(args.tot_subject_num): 
-        print(f"\nSubject: {subject_num}")
+        print(f"\nSubject: {subject_num+1}")
         
         # Check if there exist saved models.
         checkpoint_files = []       
