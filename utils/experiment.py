@@ -1,6 +1,6 @@
 # Reference:
 # - https://github.com/pytorch/examples/blob/main/reinforcement_learning/actor_critic.py#L112
-#
+
 
 import os
 import time
@@ -51,8 +51,9 @@ class Experiment():
         device = self.device0
         
         if not os.path.isfile(self.checkpoint_file): 
-
+            net = self.net.to(device)
             final_valid_accs = []
+            
             for epoch in range(self.num_epochs_pre):
                 losses, accs, accs2, stds, kappas = AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter()
 
@@ -145,8 +146,8 @@ class Experiment():
     
     
     # agent making the "mask" and fine-tuning the original model
-    def train_agents(self, WINDOW_SIZE, NUM_ACTIONS, EPSILON, SUBJECT_NUM, FOLD_NUM, mask_path):  
-        device = self.device1
+    def train_agents(self, WINDOW_SIZE, STRIDE, NUM_ACTIONS, EPSILON, SUBJECT_NUM, FOLD_NUM, mask_path):  
+        device = self.device0
         checkpoint_file_agents = self.checkpoint_file + '_agents' 
         
         if not os.path.isfile(checkpoint_file_agents):
@@ -174,28 +175,30 @@ class Experiment():
             for episode in range(self.num_epochs - self.num_epochs_pre): 
                 if episode % (len(self.train_dataloader)) == 0:
                     iterated_dataloader = iter(self.train_dataloader)
-                    Losses, ValidLosses, Rewards, Qvalues, Ratios = AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter()                
+                    Losses, ValidLosses = AverageMeter(), AverageMeter()                
                 done = False
                 
                 # train
                 self.net.train()
                 for i, data in enumerate(self.train_dataloader):  
+                    Rewards, Qvalues, Ratios = AverageMeter(), AverageMeter(), AverageMeter()
+                    
                 # data = next(iterated_dataloader) # fresh whole dataset everytime the episode starts
                     inputs = data['features'].to(device, dtype=torch.float)
                     self.writer.add_graph(self.net, inputs)
                     features = self.net.extraction(inputs)
                     targets = data['labels'].to(device, dtype=torch.long)
 
-                    env = Env(inputs, targets, self.net, self.optimizer, self.last_trans, self.criterion, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM)
+                    env = Env(device, inputs, targets, self.net, self.optimizer, self.last_trans, self.criterion, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM)
                     EPSILON * 0.995 if EPSILON > 0.1 else EPSILON     
                     agent = Agent(device, n_actions=NUM_ACTIONS, epsilon=EPSILON) # masking (0), remaining (1)
 
                     # Initialize preprocessed states (batch, window_size)
                     mask, rewards = torch.ones(features.shape).to(device), torch.tensor([-1.])
-                    states = env.reset(0, features, mask)
+                    states = env.reset(0, features)
 
                     # Until our agent learns how to select "informative" features do
-                    for t in count():      
+                    for t in range(0, features.shape[-1], STRIDE):      
                         # Select actions (batch, 1)
                         actions = agent.act(states, policy_net, features.shape[0], device)
 
@@ -229,27 +232,32 @@ class Experiment():
                             else:
                                 # Select the optimal value Q at the next time-step
                                 # by choosing the maximum Q-values among all possible actions
-                                max_Q_values = torch.tensor([target_net(next_state_batch)[i].max(dim=-1)[1] for i in range(action_batch.shape[0])]).to(device) # max Q(s, a) for DQN 
-                                reward_batch, max_Q_values = reward_batch.squeeze(), max_Q_values.squeeze()
-                                next_Q_values = reward_batch + (max_Q_values * 0.99) # r_t + gamma * Q_(t+1)
+                                max_Q_values_next = torch.tensor([target_net(next_state_batch)[i].max(dim=-1)[0] for i in range(action_batch.shape[0])]).to(device) # max_a Q(s, a) for DQN 
+                                reward_batch, max_Q_values_next = reward_batch.squeeze(), max_Q_values_next.squeeze()
+                                next_Q_values = reward_batch + (max_Q_values_next * 0.99) # r_t + gamma * Q_(t+1)
                             next_Q_values = next_Q_values.squeeze()
-
-                            Qvalues.update(torch.mean(Q_values)) 
+                            
+                            max_Q_values_current = torch.tensor([policy_net(state_batch)[i].max(dim=-1)[0] for i in range(action_batch.shape[0])]).to(device)  # maximum predicted action-value
+                            Qvalues.update(torch.mean(max_Q_values_current)) 
                             loss_q = criterion_policy(Q_values, next_Q_values)
                             loss_q = loss_q.clone().detach()
                             loss_q.requires_grad = True
                             optimizer_policy.zero_grad()
                             loss_q.backward()
-                            optimizer_policy.step()
-
+                            optimizer_policy.step()     
+                            
+                            ratio = torch.count_nonzero(mask).item() / (mask.shape[0]*mask.shape[1]) # calculate ratio only for the final mask
+                            Ratios.update(ratio, inputs.size(0))
+                    
+                        self.writer.add_image(f'mask/{episode}', mask.unsqueeze(axis=0), t) 
+                        self.writer.add_scalar(f'rewards/{episode}', Rewards.sum, t)
+                        self.writer.add_scalar(f'qvalues/{episode}', Qvalues.avg, t) # average maximum predicted action value
+                        self.writer.add_scalar(f'ratios/{episode}', Ratios.avg, t)
+                        
                     # Update states
-                    states = next_states
+                    states = next_states                 
                     
-                    ratio = torch.count_nonzero(mask).item() / (mask.shape[0]*mask.shape[1]) # calculate ratio only for the final mask
-                    Ratios.update(ratio, inputs.size(0))
-                    self.writer.add_image(f'mask/{episode}', mask.unsqueeze(axis=0), t) 
-                    
-                    print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)}, BATCH: {i}/{(len(self.train_dataloader))}, Loss: {Losses.avg.item()}, Reward: {Rewards.avg.item()}, Q-value: {Qvalues.avg.item()}')
+                    print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)}, BATCH: {i}/{(len(self.train_dataloader))}, Loss: {Losses.avg.item()}, Reward: {Rewards.sum.item()}, Q-value: {Qvalues.avg.item()}') # total reward and average maximum Q-value
                     
                 scheduler_agents.step()
                 
@@ -272,18 +280,10 @@ class Experiment():
                     
                 self.writer.add_scalar(f'loss_agents/train', Losses.avg, episode)      
                 self.writer.add_scalar(f'loss_agents/valid', ValidLosses.avg, episode)  
-                self.writer.add_scalar(f'rewards', Rewards.avg, episode)
-                self.writer.add_scalar(f'qvalues', Qvalues.avg, episode)
-                self.writer.add_scalar(f'ratios', Ratios.avg, episode) 
     
-                if episode % 2 == 0:
+                if episode % 5 == 0:
                     target_net.load_state_dict(policy_net.state_dict())                                 
-                
-                del episode, done, env, agent, data, inputs, features, targets, mask, rewards, states, next_states, experiences, batch, state_batch, action_batch, reward_batch, next_state_batch, Q_values, next_Q_values, max_Q_values, loss_q, valid_loss, ratio
-                torch.cuda.empty_cache()
 
             self.writer.flush()
             self.writer.close()
             
-            del Rewards, Losses, Qvalues, ValidLosses, Ratios, self.net, Experience, memory, policy_net, target_net, optimizer_policy, criterion_policy, self.writer
-            torch.cuda.empty_cache()
