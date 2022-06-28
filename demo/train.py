@@ -31,7 +31,7 @@ if __name__ == '__main__':
     device1 = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
     device2 = torch.device("cuda:2") if torch.cuda.is_available() else torch.device("cpu")
     today = datetime.now().strftime('%Y%m%d')
-    today = '20220627'
+    today = '20220629'
     
     parser = argparse.ArgumentParser()
     
@@ -53,16 +53,17 @@ if __name__ == '__main__':
     parser.add_argument('--t_max', type=float, default=2.5)
     parser.add_argument('--m_filters', type=int, default=2)
     
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--model_type', type=str, default='shallowConvNet')
     parser.add_argument('--F1', type=int, default=4)
     # parser.add_argument('--input_shape', type=int, nargs='+', default=[1, 1, 22, 500])
-    parser.add_argument('--dropout_rate', type=float, default=0.5)
-    parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--num_epochs', type=int, default=200)
+    parser.add_argument('--dropout_rate', type=float, default=0)
+    parser.add_argument('--learning_rate', type=float, default=0.0001)
+    parser.add_argument('--num_epochs', type=int, default=4000)
     
-    parser.add_argument('--num_epochs_pre', type=int, default=100)
+    parser.add_argument('--num_epochs_pre', type=int, default=3000)
     parser.add_argument('--window_size', type=int, default=4)
+    parser.add_argument('--stride', type=int, default=4)
     parser.add_argument('--num_actions', type=int, default=2)
     parser.add_argument('--epsilon', type=int, default=1)
     parser.add_argument('--mask_path', default='/opt/pytorch/demo/masks/')
@@ -72,7 +73,7 @@ if __name__ == '__main__':
     if args.data_type == 'bci_comp4a' or args.data_type == 'drone':
         class_num = 4
     subject_dict = {'Subject #':[], 'Accuracy':[]}
-    for subject_num in range(1): #args.tot_subject_num):
+    for subject_num in range(8, args.tot_subject_num):
         # Load training data.
         if args.data_type == 'bci_comp4a':
             dataset = BCIComp42aDataLoader(data_path=args.data_path,
@@ -95,7 +96,7 @@ if __name__ == '__main__':
         kfold = KFold(n_splits=args.fold_num, shuffle=True)
         fold_list_temp = []
         for fold, (train_idx, val_idx) in enumerate(kfold.split(dataset)):
-            print(f"\nSubject: {subject_num} Fold: {fold}")
+            print(f"\nSubject: {subject_num+1} Fold: {fold+1}")
             
             # Name file and path names
             if args.model_type == 'eegNet':
@@ -148,8 +149,7 @@ if __name__ == '__main__':
                     
                     # Train agent module
                     if args.is_agent_module:
-                        # Create a mask and finethune the original network (environment)
-                        exp.train_agents(args.window_size, args.num_actions, args.epsilon, subject_num, fold, args.mask_path)
+                        exp.train_agents(args.window_size, args.stride, args.num_actions, args.epsilon, subject_num, fold, args.mask_path)
                     else:
                         valid_acc = exp.train()
                         
