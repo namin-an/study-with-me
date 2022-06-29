@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 class DQN(nn.Module):
     """
-    Returns probability of possible actions
+    Returns Q-values of each action
     """
     def __init__(self, state_dim, n_actions):
         super(DQN, self).__init__()
@@ -16,14 +16,12 @@ class DQN(nn.Module):
         self.fc1 = nn.Linear(state_dim, 128)
         self.fc2 = nn.Linear(128, 32)
         self.fc3 = nn.Linear(32, n_actions)
-        
-        self.softmax = nn.Softmax(dim=-1)
-        
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.softmax(self.fc3(x))
-        return x
+                
+    def forward(self, state):
+        out = F.relu(self.fc1(state))
+        out = F.relu(self.fc2(out))
+        out = F.relu(self.fc3(out))
+        return out
 
         
 class Actor(nn.Module):
@@ -85,8 +83,8 @@ class ActorCritic(nn.Module):
     def __call__(self, state):
         out = F.relu(self.fc1(state))
         out = F.relu(self.fc2(out))
-        action = self.softmax(self.actor_fc3(out))
+        action_prob = self.softmax(self.actor_fc3(out))
         qvalue = self.sigmoid(self.critic_fc3(out))
-        return action, qvalue
+        return action_prob, qvalue
 
     
