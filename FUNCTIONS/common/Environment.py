@@ -43,7 +43,7 @@ class Env:
         
         loss_AM = self.criterion(outputs, self.targets.squeeze())  
         reward = - loss_AM
-        rewards = torch.tile(reward, (features.shape[0], 1))
+        rewards = reward # torch.tile(reward, (features.shape[0], 1))
 
         if (t >= features.shape[-1] - self.WINDOW_SIZE):
             self.optimizer.zero_grad()   
