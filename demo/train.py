@@ -59,7 +59,7 @@ if __name__ == '__main__':
     # parser.add_argument('--input_shape', type=int, nargs='+', default=[1, 1, 22, 500])
     parser.add_argument('--dropout_rate', type=float, default=0)
     parser.add_argument('--learning_rate', type=float, default=0.0001)
-    parser.add_argument('--num_epochs', type=int, default=4000)
+    parser.add_argument('--num_epochs', type=int, default=3100)
     
     parser.add_argument('--num_epochs_pre', type=int, default=3000)
     parser.add_argument('--window_size', type=int, default=4)
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     if args.data_type == 'bci_comp4a' or args.data_type == 'drone':
         class_num = 4
     subject_dict = {'Subject #':[], 'Accuracy':[]}
-    for subject_num in range(8, args.tot_subject_num):
+    for subject_num in range(2, args.tot_subject_num):
         # Load training data.
         if args.data_type == 'bci_comp4a':
             dataset = BCIComp42aDataLoader(data_path=args.data_path,
