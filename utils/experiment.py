@@ -152,8 +152,8 @@ class Experiment():
         
         if not os.path.isfile(checkpoint_file_agents):
             # self.net.load_state_dict(torch.load(self.checkpoint_file))
-            net = self.net.to(device)
-            optimizer = torch.optim.Adam(net.parameters(), lr=self.learning_rate)
+            self.net = self.net.to(device)
+            optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
             
             # Initialize replay memory "Experience" to capacity 10,000
             Experience = namedtuple("Experience", ("state", "action", "reward", "next_state"))
@@ -163,7 +163,7 @@ class Experiment():
             policy_net = DQN(WINDOW_SIZE, NUM_ACTIONS).to(device)
             target_net = DQN(WINDOW_SIZE, NUM_ACTIONS).to(device)
             
-            optimizer_policy = torch.optim.RMSprop(policy_net.parameters(), lr=0.0001, momentum=0.95)
+            optimizer_policy = torch.optim.Adam(policy_net.parameters(), lr=0.00005)
             criterion_policy = nn.SmoothL1Loss()
             target_net.load_state_dict(policy_net.state_dict())
             policy_net.train() 
@@ -174,7 +174,7 @@ class Experiment():
             
             for episode in range(self.num_epochs - self.num_epochs_pre): 
                 Losses, ValidLosses = AverageMeter(), AverageMeter()    
-                Rewards, Qvalues, Ratios = AverageMeter(), AverageMeter(), AverageMeter()
+                Rewards, Qvalues, Ratios, QLosses = AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter()
                 done = False
                 
                 # train
@@ -187,8 +187,8 @@ class Experiment():
                     features = self.net.extraction(inputs)
                     targets = data['labels'].to(device, dtype=torch.long)
 
-                    env = Env(device, inputs, targets, self.net, self.optimizer, self.last_trans, self.criterion, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM)
-                    EPSILON * 0.995 if EPSILON > 0.1 else EPSILON     
+                    env = Env(device, inputs, targets, self.net, optimizer, self.last_trans, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM)
+                    EPSILON * 0.99 if EPSILON >= 0.05 else EPSILON     
                     agent = Agent(device, n_actions=NUM_ACTIONS, epsilon=EPSILON) # masking (0), remaining (1)
 
                     # Initialize preprocessed states (batch, window_size)
@@ -198,7 +198,7 @@ class Experiment():
                     # Until our agent learns how to select "informative" features do
                     for t in range(0, features.shape[-1], STRIDE):      
                         # Select actions (batch, 1)
-                        actions = agent.act(states, policy_net, 1, device)
+                        actions = agent.act(states, policy_net, states.shape[0], device)
 
                         # Execute action and observe reward and the next state
                         # and update the original network with selected features   
@@ -208,27 +208,21 @@ class Experiment():
                         Losses.update(loss) 
                         Rewards.update(torch.mean(rewards))                    
 
-                        # Calculate mean of the features along the batch
-                        actions = torch.mean(actions.type(torch.FloatTensor), dim=0).unsqueeze(dim=0).type(torch.LongTensor) 
-                        states = torch.mean(states, dim=0).unsqueeze(dim=0)
-                        rewards = rewards.unsqueeze(dim=0)
-                        next_states = torch.mean(next_states, dim=0).unsqueeze(dim=0)
-                 
                         # Store experiences in the replay memory
-                        memory.push(states, actions, rewards, next_states) # DQN update (affects the agent.act(state, policy_net) code)
+                        memory.push(states.shape[0], states, actions, rewards, next_states) # DQN update (affects the agent.act(state, policy_net) code)
                         # Optimize policy network using the memory buffer
-                        if len(memory) >= 1:
+                        if len(memory) >= 100:
                             # Sample random minibatch of experiences from the replay memory
-                            experiences = memory.sample(1) # ex. [Experience(states=4, actions=5), Experience(states=4, actions=5)] # sampling one is enough, since one memory contains the whole batch.
+                            experiences = memory.sample(32) # ex. [Experience(states=4, actions=5), Experience(states=4, actions=5)] # sampling one is enough, since one memory contains the whole batch.
                             batch = Experience(*zip(*experiences)) # ex. Experience(states=(4, 4), actions=(5, 5))         
-
                             # Convert tuples to tensors
-                            state_batch = torch.cat(batch.state).to(device) 
-                            action_batch = torch.cat(batch.action).to(device) 
-                            reward_batch = torch.cat(batch.reward).to(device)  
-                            next_state_batch = torch.cat(batch.next_state).to(device)
+                            state_batch = torch.stack(list(batch.state), dim=0).to(device) 
+                            action_batch = torch.stack(list(batch.action), dim=0).to(device) 
+                            reward_batch = torch.stack(list(batch.reward), dim=0).to(device)  
+                            next_state_batch = torch.stack(list(batch.next_state), dim=0).to(device)
                             Q_values = torch.tensor([policy_net(state_batch)[i][action_batch[i]].item() for i in range(action_batch.shape[0])]).to(device)
                             Q_values = Q_values.squeeze()
+                            
 
                             if t == features.shape[-1] - states.shape[-1]:
                                 next_Q_values = reward_batch.to(device)
@@ -239,7 +233,7 @@ class Experiment():
                                 reward_batch, max_Q_values_next = reward_batch.squeeze(), max_Q_values_next.squeeze()
                                 next_Q_values = reward_batch + (max_Q_values_next * 0.99) # r_t + gamma * Q_(t+1)
                             next_Q_values = next_Q_values.squeeze()
-                            
+
                             max_Q_values_current = torch.tensor([policy_net(state_batch)[i].max(dim=-1)[0] for i in range(action_batch.shape[0])]).to(device)  # maximum predicted action-value
                             Qvalues.update(torch.mean(max_Q_values_current)) 
                             loss_q = criterion_policy(Q_values, next_Q_values)
@@ -247,6 +241,7 @@ class Experiment():
                             loss_q.requires_grad = True
                             optimizer_policy.zero_grad()
                             loss_q.backward()
+                            QLosses.update(loss_q, inputs.size(0))
                             optimizer_policy.step()     
                             
                             ratio = torch.count_nonzero(mask).item() / (mask.shape[0]*mask.shape[1]) # calculate ratio only for the final mask
@@ -255,9 +250,11 @@ class Experiment():
                     # Update states
                     states = next_states   
                     
-                    print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)}, BATCH: {i}/{(len(self.train_dataloader))}, Loss: {Losses.avg.item()}, Reward: {Rewards.sum.item()}, Q-value: {Qvalues.avg.item()}') # total reward and average maximum Q-value
+                    scheduler_agents.step()
+                    
+                    print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)}, BATCH: {i}/{(len(self.train_dataloader))}, Loss: {Losses.avg.item()}, Reward: {Rewards.sum.item()}, Q-value: {Qvalues.avg.item()}, Q Loss: {QLosses.avg.item()}') # total reward and average maximum Q-value
                 
-                scheduler_agents.step()
+                self.scheduler.step()
                                     
                 # validation
                 self.net.eval()
@@ -272,7 +269,7 @@ class Experiment():
                     print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)},BATCH: {j}/{len(self.valid_dataloader)}, Valid_loss:{ValidLosses.avg.item()}')
                 
                 early_stopping_agents(ValidLosses.avg.item(), self.net)
-                if self.early_stopping.early_stop:
+                if early_stopping_agents.early_stop:
                     print("Early stopped.")
                     break
                     
@@ -282,8 +279,9 @@ class Experiment():
                 self.writer.add_scalar(f'rewards', Rewards.sum, episode)
                 self.writer.add_scalar(f'qvalues', Qvalues.avg, episode) # average maximum predicted action value
                 self.writer.add_scalar(f'ratios', Ratios.avg, episode)
+                self.writer.add_scalar(f'loss_agents/Q', QLosses.avg, episode)
     
-                if episode % 5 == 0:
+                if episode % 2 == 0:
                     target_net.load_state_dict(policy_net.state_dict())                                 
 
             self.writer.flush()
