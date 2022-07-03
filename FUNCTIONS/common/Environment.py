@@ -6,14 +6,14 @@ import torch.nn as nn
 
 
 class Env:
-    def __init__(self, device, inputs, targets, net, optimizer, last_trans, criterion, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM):
+    def __init__(self, device, inputs, targets, net, optimizer, last_trans, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM):
         self.device = device
         self.inputs = inputs
         self.targets = targets
         self.net = net
         self.optimizer = optimizer
         self.last_trans = last_trans
-        self.criterion = criterion
+        self.criterion = nn.CrossEntropyLoss(reduction='none')
         self.checkpoint_file_agents = checkpoint_file_agents
         self.mask_path = mask_path
         self.WINDOW_SIZE = WINDOW_SIZE
@@ -41,14 +41,14 @@ class Env:
         outputs = self.net.classification(masked_features)    
         del temp1, temp2, partial_mask, masked_features
         
-        loss_AM = self.criterion(outputs, self.targets.squeeze())  
-        reward = - loss_AM
-        rewards = reward # torch.tile(reward, (features.shape[0], 1))
+        loss_AMs = self.criterion(outputs, self.targets.squeeze())  
+        loss_AM = torch.mean(loss_AMs, dim=0)
+        rewards = 1.5 - loss_AMs
 
         if (t >= features.shape[-1] - self.WINDOW_SIZE):
-            self.optimizer.zero_grad()   
-            loss_AM.backward()
-            self.optimizer.step() 
+#             self.optimizer.zero_grad()   
+#             loss_AM.backward()
+#             self.optimizer.step() 
             next_states, rewards, done, loss_AM = None, None, True, None
         else:
             done = False            

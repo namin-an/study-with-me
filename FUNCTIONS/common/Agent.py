@@ -23,5 +23,6 @@ class Agent:
             with torch.no_grad():
                 action_probs = policy_net(states)
                 actions = action_probs.max(dim=-1)[1] # find the maximum index along all the action probabilities
+
         return actions
     

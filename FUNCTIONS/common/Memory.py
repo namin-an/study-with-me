@@ -6,18 +6,18 @@ import random
 from collections import namedtuple, deque
 
 
-
 class ReplayMemory(object):
     def __init__(self, capacity, Experience):
         self.memory = deque([], maxlen=capacity) # FIFO & LIFO   
         self.Experience = Experience
         
-    def push(self, *args):
+    def push(self, BATCH_SIZE, states, actions, rewards, next_states):
         """
         Stores experiences in the memory buffer.
         """
-        self.memory.append(self.Experience(*args))
-    
+        for i in range(BATCH_SIZE):
+            self.memory.append(self.Experience(states[i], actions[i].unsqueeze(dim=0), rewards[i].unsqueeze(dim=0), next_states[i]))
+
     def sample(self, batch_size):
         """
         Returns experiences
