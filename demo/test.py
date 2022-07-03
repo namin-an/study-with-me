@@ -22,10 +22,10 @@ from utils.evaluate import Evaluate
 from utils.evaluate_FBCSP import EvaluateFBCSP
 
 if __name__ == '__main__':
-    device = torch.device("cuda:2") if torch.cuda.is_available() else torch.device("cpu")
+    device = torch.device("cpu") #torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     print(torch.cuda.device_count(), device, 'devices available')
     today = datetime.now().strftime('%Y%m%d')
-    today = '20220629'
+    today = '20220702'
     
     parser = argparse.ArgumentParser()
     
@@ -87,7 +87,7 @@ if __name__ == '__main__':
                     checkpoint_file = f'../checkpoints/{today}/{args.data_type}/{model_name}_subject{other_subject_num}_fold{fold}{extra_name}'
                     if os.path.isfile(checkpoint_file):
                         checkpoint_files.append(checkpoint_file) 
-
+       
         if len(checkpoint_files) > 0:            
             # Load test data.
             if args.data_type == 'bci_comp4a':
@@ -112,23 +112,22 @@ if __name__ == '__main__':
             test_features, test_label = next(iter(test_dataloader))['features'], next(iter(test_dataloader))['labels']
             print(f"shape of features: {test_features.shape}")
             print(f"shape of label: {test_label.shape}")
-            X = torch.rand(test_features.shape).to(device)
+            X = torch.rand(test_features.shape)
             if args.model_type == 'deepConvNet':
-                net = DeepConvNet(test_features.shape[1:], args.s_freq, class_num).to(device)
+                net = DeepConvNet(test_features.shape[1:], args.s_freq, class_num)
             elif args.model_type == 'shallowConvNet':
-                net = ShallowConvNet(test_features.shape[1:], args.s_freq, class_num).to(device)
+                net = ShallowConvNet(test_features.shape[1:], args.s_freq, class_num)
             elif args.model_type == 'mshallowConvNet':
-                    net = MShallowConvNet(test_features.shape[1:], args.s_freq, class_num).to(device)
+                    net = MShallowConvNet(test_features.shape[1:], args.s_freq, class_num)
             elif args.model_type == 'eegNet':
-                net = EEGNet(test_features.shape[1:], args.s_freq,class_num, args.dropout_rate, args.F1).to(device)                   
+                net = EEGNet(test_features.shape[1:], args.s_freq,class_num, args.dropout_rate, args.F1)                  
             elif args.model_type == 'MSNN':
-                net = MSNN(test_features.shape[1:], args.s_freq, class_num, args.dropout_rate).to(device)                   
+                net = MSNN(test_features.shape[1:], args.s_freq, class_num, args.dropout_rate)               
             elif args.model_type == 'FBCSP':
                 net = EvaluateFBCSP(class_num, args.s_freq, args.l_freq, args.h_freq, args.width, args.step, args.m_filters)
             if args.model_type != 'FBCSP':
                 y = net(X) # initialize model parameters for Dataparallel and lazy modules
                 print(f"shape of final output: {y.shape}")
-                net = net.to(device)
                 
                 # Test saved neural network.
                 net.eval()

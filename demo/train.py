@@ -31,7 +31,7 @@ if __name__ == '__main__':
     device1 = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
     device2 = torch.device("cuda:2") if torch.cuda.is_available() else torch.device("cpu")
     today = datetime.now().strftime('%Y%m%d')
-    today = '20220629'
+    today = '20220702'
     
     parser = argparse.ArgumentParser()
     
@@ -59,11 +59,11 @@ if __name__ == '__main__':
     # parser.add_argument('--input_shape', type=int, nargs='+', default=[1, 1, 22, 500])
     parser.add_argument('--dropout_rate', type=float, default=0)
     parser.add_argument('--learning_rate', type=float, default=0.0001)
-    parser.add_argument('--num_epochs', type=int, default=3100)
+    parser.add_argument('--num_epochs', type=int, default=4000)
     
     parser.add_argument('--num_epochs_pre', type=int, default=3000)
     parser.add_argument('--window_size', type=int, default=4)
-    parser.add_argument('--stride', type=int, default=4)
+    parser.add_argument('--stride', type=int, default=1)
     parser.add_argument('--num_actions', type=int, default=2)
     parser.add_argument('--epsilon', type=int, default=1)
     parser.add_argument('--mask_path', default='/opt/pytorch/demo/masks/')
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     if args.data_type == 'bci_comp4a' or args.data_type == 'drone':
         class_num = 4
     subject_dict = {'Subject #':[], 'Accuracy':[]}
-    for subject_num in range(2, args.tot_subject_num):
+    for subject_num in range(1): #, args.tot_subject_num):
         # Load training data.
         if args.data_type == 'bci_comp4a':
             dataset = BCIComp42aDataLoader(data_path=args.data_path,
@@ -121,23 +121,22 @@ if __name__ == '__main__':
                 train_features, train_label = next(iter(train_dataloader))['features'], next(iter(train_dataloader))['labels']
                 print(f"shape of features: {train_features.shape}")
                 print(f"shape of label: {train_label.shape}")
-                X = torch.rand(train_features.shape).to(device0)
+                X = torch.rand(train_features.shape)
                 if args.model_type == 'deepConvNet':
-                    net = DeepConvNet(train_features.shape[1:], args.s_freq, class_num).to(device0)
+                    net = DeepConvNet(train_features.shape[1:], args.s_freq, class_num)
                 elif args.model_type == 'shallowConvNet':
-                    net = ShallowConvNet(train_features.shape[1:], args.s_freq, class_num).to(device0)
+                    net = ShallowConvNet(train_features.shape[1:], args.s_freq, class_num)
                 elif args.model_type == 'mshallowConvNet':
-                    net = MShallowConvNet(train_features.shape[1:], args.s_freq, class_num).to(device0)
+                    net = MShallowConvNet(train_features.shape[1:], args.s_freq, class_num)
                 elif args.model_type == 'eegNet':
-                    net = EEGNet(train_features.shape[1:], args.s_freq,class_num, args.dropout_rate, args.F1).to(device0)                   
+                    net = EEGNet(train_features.shape[1:], args.s_freq,class_num, args.dropout_rate, args.F1)               
                 elif args.model_type == 'MSNN':
-                    net = MSNN(train_features.shape[1:], args.s_freq, class_num, args.dropout_rate).to(device0)                   
+                    net = MSNN(train_features.shape[1:], args.s_freq, class_num, args.dropout_rate)               
                 elif args.model_type == 'FBCSP':
                     net = ExperimentFBCSP(class_num, args.s_freq, args.l_freq, args.h_freq, args.width, args.step, args.m_filters)
                 if args.model_type != 'FBCSP':
                     y = net(X) # initialize model parameters for Dataparallel and lazy modules
                     print(f"shape of final output: {y.shape}")
-                    net = net.to(device0)
                     summary(net) 
                     
                     # Load saved weights
