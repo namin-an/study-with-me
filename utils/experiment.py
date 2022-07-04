@@ -142,28 +142,28 @@ class Experiment():
             self.writer.close()
         else:
             final_valid_accs = [0]
-        return max(final_valid_accs)
+        return max(final_valid_accs), self.net
     
     
     # agent making the "mask" and fine-tuning the original model
-    def train_agents(self, WINDOW_SIZE, STRIDE, NUM_ACTIONS, EPSILON, SUBJECT_NUM, FOLD_NUM, mask_path):  
-        device = self.device2
+    def train_agents(self, net, WINDOW_SIZE, STRIDE, NUM_ACTIONS, EPSILON, SUBJECT_NUM, FOLD_NUM, mask_path):  
+        device = self.device0
         checkpoint_file_agents = self.checkpoint_file + '_agents' 
         
         if not os.path.isfile(checkpoint_file_agents):
-            # self.net.load_state_dict(torch.load(self.checkpoint_file))
-            self.net = self.net.to(device)
-            optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
+            net.load_state_dict(torch.load(self.checkpoint_file))
+            net = net.to(device)
+            optimizer = torch.optim.Adam(net.parameters(), lr=self.learning_rate)
             
             # Initialize replay memory "Experience" to capacity 10,000
             Experience = namedtuple("Experience", ("state", "action", "reward", "next_state"))
-            memory = ReplayMemory(10000, Experience)
+            memory = ReplayMemory(100000, Experience)
             
             # Initialize action-value and target action-value network   
             policy_net = DQN(WINDOW_SIZE, NUM_ACTIONS).to(device)
             target_net = DQN(WINDOW_SIZE, NUM_ACTIONS).to(device)
             
-            optimizer_policy = torch.optim.Adam(policy_net.parameters(), lr=0.00005)
+            optimizer_policy = torch.optim.Adam(policy_net.parameters(), lr=0.0003)
             criterion_policy = nn.SmoothL1Loss()
             target_net.load_state_dict(policy_net.state_dict())
             policy_net.train() 
@@ -173,7 +173,7 @@ class Experiment():
             scheduler_agents = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=self.num_epochs - self.num_epochs_pre)
             
             for episode in range(self.num_epochs - self.num_epochs_pre): 
-                Losses, ValidLosses = AverageMeter(), AverageMeter()    
+                Losses_FM, Losses_AM, ValidLosses = AverageMeter(), AverageMeter(), AverageMeter()    
                 Rewards, Qvalues, Ratios, QLosses = AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter()
                 done = False
                 
@@ -187,7 +187,7 @@ class Experiment():
                     features = self.net.extraction(inputs)
                     targets = data['labels'].to(device, dtype=torch.long)
 
-                    env = Env(device, inputs, targets, self.net, optimizer, self.last_trans, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM)
+                    env = Env(device, inputs, targets, net, optimizer, self.last_trans, checkpoint_file_agents, mask_path, WINDOW_SIZE, SUBJECT_NUM, FOLD_NUM)
                     EPSILON * 0.99 if EPSILON >= 0.05 else EPSILON     
                     agent = Agent(device, n_actions=NUM_ACTIONS, epsilon=EPSILON) # masking (0), remaining (1)
 
@@ -202,10 +202,11 @@ class Experiment():
 
                         # Execute action and observe reward and the next state
                         # and update the original network with selected features   
-                        next_states, rewards, done, loss, mask = env.step(episode, t, actions, states, features, mask)   
+                        next_states, rewards, done, loss_FM, loss_AM, mask = env.step(episode, t, actions, states, inputs, features, mask)   
                         if done:
                             break
-                        Losses.update(loss) 
+                        Losses_FM.update(loss_FM)
+                        Losses_AM.update(loss_AM)
                         Rewards.update(torch.mean(rewards))                    
 
                         # Store experiences in the replay memory
@@ -252,7 +253,7 @@ class Experiment():
                     
                     scheduler_agents.step()
                     
-                    print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)}, BATCH: {i}/{(len(self.train_dataloader))}, Loss: {Losses.avg.item()}, Reward: {Rewards.sum.item()}, Q-value: {Qvalues.avg.item()}, Q Loss: {QLosses.avg.item()}') # total reward and average maximum Q-value
+                    print(f'EPISODE: {episode}/{(self.num_epochs - self.num_epochs_pre)}, BATCH: {i}/{(len(self.train_dataloader))}, Loss FM: {Losses_FM.avg.item()}, Loss AM: {Losses_AM.avg.item()}, Reward: {Rewards.avg.item()}, Q-value: {Qvalues.avg.item()}, Q Loss: {QLosses.avg.item()}') # total reward and average maximum Q-value
                 
                 self.scheduler.step()
                                     
@@ -273,13 +274,14 @@ class Experiment():
                     print("Early stopped.")
                     break
                     
-                self.writer.add_scalar(f'loss_agents/train', Losses.avg, episode)      
+                self.writer.add_scalar(f'loss_agents/train/FM', Losses_FM.avg, episode)   
+                self.writer.add_scalar(f'loss_agents/train/AM', Losses_AM.avg, episode)   
                 self.writer.add_scalar(f'loss_agents/valid', ValidLosses.avg, episode)  
                 # self.writer.add_image(f'mask', mask.unsqueeze(axis=0), epsiode) 
                 self.writer.add_scalar(f'rewards', Rewards.sum, episode)
                 self.writer.add_scalar(f'qvalues', Qvalues.avg, episode) # average maximum predicted action value
                 self.writer.add_scalar(f'ratios', Ratios.avg, episode)
-                self.writer.add_scalar(f'loss_agents/Q', QLosses.avg, episode)
+                self.writer.add_scalar(f'loss_agents/DQN', QLosses.avg, episode)
     
                 if episode % 2 == 0:
                     target_net.load_state_dict(policy_net.state_dict())                                 

@@ -27,8 +27,10 @@ class Env:
         states = features[:, t:t+self.WINDOW_SIZE]
         return states
     
-    def step(self, episode, t, actions, states, features, mask):
+    def step(self, episode, t, actions, states, inputs, features, mask):
 
+        outputs_FM = self.net.classification(features)
+        
         mask[:, t:t+self.WINDOW_SIZE] = torch.tile(actions.unsqueeze(dim=-1), dims=(1, self.WINDOW_SIZE))
         
         temp1 = torch.ones(features.shape)
@@ -37,21 +39,23 @@ class Env:
         temp2[:, t:t+self.WINDOW_SIZE] =  features[:, t:t+self.WINDOW_SIZE] * mask[:, t:t+self.WINDOW_SIZE]
         partial_mask = (temp1 + temp2).to(self.device)
         masked_features = features * partial_mask
-                
-        outputs = self.net.classification(masked_features)    
+         
+        outputs_AM = self.net.classification(masked_features)    
         del temp1, temp2, partial_mask, masked_features
         
-        loss_AMs = self.criterion(outputs, self.targets.squeeze())  
+        loss_FMs = self.criterion(outputs_FM, self.targets.squeeze())
+        loss_FM = torch.mean(loss_FMs, dim=0)
+        loss_AMs = self.criterion(outputs_AM, self.targets.squeeze())  
         loss_AM = torch.mean(loss_AMs, dim=0)
-        rewards = 1.5 - loss_AMs
+        rewards = loss_FMs - loss_AMs
 
         if (t >= features.shape[-1] - self.WINDOW_SIZE):
-#             self.optimizer.zero_grad()   
-#             loss_AM.backward()
-#             self.optimizer.step() 
+            self.optimizer.zero_grad()   
+            loss_AM.backward()
+            self.optimizer.step() 
             next_states, rewards, done, loss_AM = None, None, True, None
         else:
             done = False            
             next_states = self.reset(t+1, features) # not affected by the current action  
 
-        return next_states, rewards, done, loss_AM, mask
+        return next_states, rewards, done, loss_FM, loss_AM, mask
